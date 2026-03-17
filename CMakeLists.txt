@@ -1,26 +1,66 @@
-cmake_minimum_required(VERSION 3.10)
-project(MyOpenCVProject)
+cmake_minimum_required(VERSION 3.18)
+project(BiometricCUDA LANGUAGES CXX CUDA)
 
-# Путь к установленному OpenCV
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CUDA_STANDARD 23)
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
+# ==================== OPENCV ====================
 set(OpenCV_DIR "D:/OpenCV/install/x64/vc17/lib")
 find_package(OpenCV REQUIRED COMPONENTS 
-    core imgproc imgcodecs videoio highgui
-    dnn cudaarithm cudaimgproc cudafilters cudacodec
-    features2d xfeatures2d tracking quality face
-    optflow stitching video cudastereo cudaoptflow cudabgsegm aruco)
+    core imgproc cudaarithm cudaimgproc cudafilters cudawarping
+    imgcodecs)
 
-add_executable(lib_test lib_test.cpp)
-target_link_libraries(lib_test ${OpenCV_LIBS})
+# ==================== CUDA TOOLKIT ====================
+find_package(CUDAToolkit REQUIRED)
 
-target_compile_definitions(lib_test PRIVATE
-    HAVE_CUDA
-    HAVE_CUDNN
-    HAVE_OPENCV_CUDACODEC
-    HAVE_OPENCL
-    HAVE_VULKAN)
+# ==================== EXECUTABLE ====================
+file(GLOB COMMON 
+    "src/common/*/*"
+)
+file(GLOB ARCFACE 
+    "src/arcface/*"
+)
+file(GLOB FISHERFACES 
+    "src/fisherfaces/*/*"
+)
+file(GLOB LBPH 
+    "src/LBPH/*/*"
+)
 
-# Опционально: копировать DLL при сборке
-add_custom_command(TARGET lib_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "D:/OpenCV/build/install/x64/vc17/bin"
-    $<TARGET_FILE_DIR:lib_test>)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS 
+             "src/common/*/*"
+             "src/arcface/*"
+             "src/fisherfaces/*/*"
+             "src/LBPH/*/*"
+)
+
+add_executable(biometric
+    src/main.cpp
+    ${COMMON}
+    ${ARCFACE}
+    ${FISHERFACES}
+    ${LBPH}
+    # src/cores/test.cu  # Файл с вашими ядрами
+)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --use_fast_math")
+set(CMAKE_CUDA_FLAGS_DEBUG "")  # Убрать -G из дебаг сборки
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --use_fast_math")
+
+set(ONNX_MODEL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data/models/face_detection_yunet_2023mar.onnx")
+
+target_include_directories(biometric PRIVATE 
+    ${CMAKE_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${CUDAToolkit_INCLUDE_DIRS}  # Пути к заголовкам CUDA
+)
+
+target_link_libraries(biometric 
+    ${OpenCV_LIBS}
+    CUDA::cudart  # CUDA runtime из CUDAToolkit
+)
+
+target_compile_definitions(biometric PRIVATE 
+    ONNX_MODEL_PATH="${ONNX_MODEL_PATH}"
+)
