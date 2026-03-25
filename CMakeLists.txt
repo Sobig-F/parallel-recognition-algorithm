@@ -9,14 +9,14 @@ set(CMAKE_CUDA_ARCHITECTURES 89)
 set(OpenCV_DIR "D:/OpenCV/install/x64/vc17/lib")
 find_package(OpenCV REQUIRED COMPONENTS 
     core imgproc cudaarithm cudaimgproc cudafilters cudawarping
-    imgcodecs)
+    imgcodecs dnn highgui objdetect)
 
 # ==================== CUDA TOOLKIT ====================
 find_package(CUDAToolkit REQUIRED)
 
 # ==================== EXECUTABLE ====================
-file(GLOB COMMON 
-    "src/common/*/*"
+file(GLOB PREPROC 
+    "src/preproc/*"
 )
 file(GLOB ARCFACE 
     "src/arcface/*"
@@ -29,7 +29,7 @@ file(GLOB LBPH
 )
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS 
-             "src/common/*/*"
+             "src/preproc/*"
              "src/arcface/*"
              "src/fisherfaces/*/*"
              "src/LBPH/*/*"
@@ -37,7 +37,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 
 add_executable(biometric
     src/main.cpp
-    ${COMMON}
+    ${PREPROC}
     ${ARCFACE}
     ${FISHERFACES}
     ${LBPH}
@@ -49,6 +49,7 @@ set(CMAKE_CUDA_FLAGS_DEBUG "")  # Убрать -G из дебаг сборки
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --use_fast_math")
 
 set(ONNX_MODEL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data/models/face_detection_yunet_2023mar.onnx")
+set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/")
 
 target_include_directories(biometric PRIVATE 
     ${CMAKE_SOURCE_DIR}/src
@@ -63,4 +64,5 @@ target_link_libraries(biometric
 
 target_compile_definitions(biometric PRIVATE 
     ONNX_MODEL_PATH="${ONNX_MODEL_PATH}"
+    SRC_DIR="${SRC_DIR}"
 )

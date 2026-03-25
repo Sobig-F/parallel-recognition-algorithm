@@ -1,189 +1,113 @@
-// #include "lbph_cpu.hpp"
-// // #include "opencv2/opencv.hpp"
-
-// cv::Mat LBPH::cpu::PreprocessImage(const cv::Mat& img_) noexcept
-// {
-//     cv::Mat img_gray, img_equalized, result;
-//     if (img_.channels() == 3) {
-//         cv::cvtColor(img_, img_gray, cv::COLOR_BGR2GRAY);
-//     } else if (img_.channels() == 4) {
-//         cv::cvtColor(img_, img_gray, cv::COLOR_BGRA2GRAY);
-//     } else if (img_.channels() == 1) {
-//         img_gray = img_;
-//     }
-
-//     cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
-//     clahe->apply(img_gray, img_equalized);
-
-//     cv::resize(img_equalized, result, cv::Size(256, 256), 0, 0, cv::INTER_LINEAR);
-
-//     return result;
-// }
-
-// cv::Mat LBPH::cpu::LBPCode(const cv::Mat& img_, LBP_Radius radius) noexcept
-// {
-//     cv::Mat result = cv::Mat::zeros(cv::Size(img_.size()), CV_8UC1);
-//     int local_lbp = 0;
-
-//     if (radius == 1)
-//     {
-//         for (int row = 1; row + 1 < img_.rows; ++row)
-//         {
-//             for (int col = 1; col + 1 < img_.cols; ++col)
-//             {
-//                 uchar center = img_.at<uchar>(row, col);
-//                 if (img_.ptr<uchar>(row - 1)[col - 1] > center) {
-//                     local_lbp |= (1 << 0);
-//                 }
-//                 if (img_.ptr<uchar>(row - 1)[col] > center) {
-//                     local_lbp |= (1 << 1);
-//                 }
-//                 if (img_.ptr<uchar>(row - 1)[col + 1] > center) {
-//                     local_lbp |= (1 << 2);
-//                 }
-//                 if (img_.ptr<uchar>(row)[col + 1] > center) {
-//                     local_lbp |= (1 << 3);
-//                 }
-//                 if (img_.ptr<uchar>(row + 1)[col + 1] > center) {
-//                     local_lbp |= (1 << 4);
-//                 }
-//                 if (img_.ptr<uchar>(row + 1)[col] > center) {
-//                     local_lbp |= (1 << 5);
-//                 }
-//                 if (img_.ptr<uchar>(row + 1)[col - 1] > center) {
-//                     local_lbp |= (1 << 6);
-//                 }
-//                 if (img_.ptr<uchar>(row)[col - 1] > center) {
-//                     local_lbp |= (1 << 7);
-//                 }
-                
-//                 result.at<uchar>(row, col) = local_lbp;
-//                 local_lbp = 0;
-//             }
-//         }
-//     }
-
-//     return result;
-// }
-
-// cv::Mat LBPH::cpu::Histogram(const cv::Mat& lbpcodes_)
-// {
-//     cv::Mat result(256, 1, CV_64FC1, cv::Scalar(0.0));
-
-//     for (int row = 1; row + 1 < lbpcodes_.rows; ++row)
-//     {
-//         for (int col = 1; col + 1 < lbpcodes_.cols; ++col)
-//         {
-//             result.ptr<double>(lbpcodes_.ptr<uchar>(row)[col])[0] += 1.0;
-//         }
-//     }
-
-//     return result;
-// }
-
-// void LBPH::cpu::NormalizeHistoram(cv::Mat& histogram_)
-// {
-//     double sum = cv::sum(histogram_)[0];
-//     if (sum > 0)
-//     {
-//         histogram_ /= sum;
-//     }
-// }
-
-// double LBPH::cpu::Distance(const cv::Mat& target, const cv::Mat& variant)
-// {
-//     double result = 0;
-//     double a, b, diff;
-
-//     for (int i = 0; i < 256; ++i)
-//     {
-//         a = target.ptr<double>(i)[0];
-//         b = variant.ptr<double>(i)[0];
-
-//         if (a + b > 0)
-//         {
-//             diff = a - b;
-//             result += (diff * diff) / (a + b);
-//         }
-//     }
-
-//     return result;
-// }
-
 #include <math.h>
+#include <numbers>
 
 #include "lbph_cpu.hpp"
 
 namespace LBPH::cpu
 {
-LBPH::LBPH(std::unique_ptr<cv::Mat> img_)
-: _img{move(img_)}
+int LBPH::_i = 0;
+LBPH::LBPH(const cv::Mat img_)
+: _img(img_)
 {
-    PreprocessImage(*_img.get());
     LBPCodes();
     NormalizeHistogram();
 }
 
-void LBPH::PreprocessImage(cv::Mat& img_) noexcept
-{
-    cv::Mat img_gray, img_equalized, result;
-    if (img_.channels() == 3) {
-        cv::cvtColor(img_, img_gray, cv::COLOR_BGR2GRAY);
-    } else if (img_.channels() == 4) {
-        cv::cvtColor(img_, img_gray, cv::COLOR_BGRA2GRAY);
-    } else if (img_.channels() == 1) {
-        img_gray = img_;
-    }
-
-    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
-    clahe->apply(img_gray, img_equalized);
-
-    cv::resize(img_equalized, img_, cv::Size(256, 256), 0, 0, cv::INTER_LINEAR);
-}
-
 void LBPH::LBPCodes() noexcept
 {
+    ++_i;
     _LBPCode_r1 = LBPH::LBPCode(1);
     _LBPCode_r2 = LBPH::LBPCode(2);
     _LBPCode_r3 = LBPH::LBPCode(3);
+    cv::Mat lbp_vis;
+    _LBPCode_r1.convertTo(lbp_vis, CV_8U);  // 0-255 → 0-255 (уже в нужном диапазоне)
+    cv::imwrite(SRC_DIR"/../" + std::to_string(_i) + ".png", lbp_vis);
+
+    // std::cout << "LBP Code stats:" << std::endl;
+
+    // auto printStats = [](const cv::Mat& lbp, const std::string& label) {
+    //     cv::Mat hist(256, 1, CV_32S, cv::Scalar(0));
+    //     for (int r = 0; r < lbp.rows; ++r) {
+    //         for (int c = 0; c < lbp.cols; ++c) {
+    //             hist.at<int>(lbp.at<uchar>(r, c), 0)++;
+    //         }
+    //     }
+        
+    //     int maxBin = 0, maxVal = 0;
+    //     for (int i = 0; i < 256; ++i) {
+    //         if (hist.at<int>(i, 0) > maxVal) {
+    //             maxVal = hist.at<int>(i, 0);
+    //             maxBin = i;
+    //         }
+    //     }
+        
+    //     std::cout << label << ": max bin=" << maxBin 
+    //             << " (count=" << maxVal << ")" << std::endl;
+    // };
+
+    // printStats(_LBPCode_r1, "R=1");
+    // printStats(_LBPCode_r2, "R=2");
+    // printStats(_LBPCode_r3, "R=3");
 }
 
-cv::Mat LBPH::LBPCode(int radius_) noexcept
-{
-    cv::Mat result = cv::Mat::zeros(cv::Size(_img->size()), CV_8UC1);
-    int local_lbp = 0;
-    for (int row = radius_; row + radius_ <= _img->rows - radius_; ++row)
-    {
-        for (int col = radius_; col + radius_ <= _img->cols - radius_; ++col)
-        {
-            uchar center = _img->at<uchar>(row, col);
-            if (_img->ptr<uchar>(row - radius_)[col - radius_] > center) {
-                local_lbp |= (1 << 0);
-            }
-            if (_img->ptr<uchar>(row - radius_)[col] > center) {
-                local_lbp |= (1 << 1);
-            }
-            if (_img->ptr<uchar>(row - radius_)[col + radius_] > center) {
-                local_lbp |= (1 << 2);
-            }
-            if (_img->ptr<uchar>(row)[col + radius_] > center) {
-                local_lbp |= (1 << 3);
-            }
-            if (_img->ptr<uchar>(row + radius_)[col + radius_] > center) {
-                local_lbp |= (1 << 4);
-            }
-            if (_img->ptr<uchar>(row + radius_)[col] > center) {
-                local_lbp |= (1 << 5);
-            }
-            if (_img->ptr<uchar>(row + radius_)[col - radius_] > center) {
-                local_lbp |= (1 << 6);
-            }
-            if (_img->ptr<uchar>(row)[col - radius_] > center) {
-                local_lbp |= (1 << 7);
+cv::Mat LBPH::LBPCode(int radius) noexcept {
+    cv::Mat result = cv::Mat::zeros(_img.size(), CV_8UC1);
+    
+    // 8 углов для 8 соседей (в радианах)
+    const float angles[8] = {
+        0,
+        -std::numbers::pi_v<float> / 4,
+        -std::numbers::pi_v<float> / 2,
+        -3 * std::numbers::pi_v<float> / 4,
+        std::numbers::pi_v<float>,
+        3 * std::numbers::pi_v<float> / 4,
+        std::numbers::pi_v<float> / 2,
+        std::numbers::pi_v<float> / 4
+    };
+    
+    // Проходим только по пикселям, где все соседи помещаются в изображение
+    for (int row = radius; row < _img.rows - radius; ++row) {
+        for (int col = radius; col < _img.cols - radius; ++col) {
+            
+            uchar center = _img.at<uchar>(row, col);
+            uchar lbp_code = 0;
+            
+            // Проверяем 8 соседей на окружности
+            for (int p = 0; p < 8; ++p) {
+                // Координаты соседа (плавающие)
+                float x = col + radius * std::cos(angles[p]);
+                float y = row + radius * std::sin(angles[p]);
+                
+                // === БИЛИНЕЙНАЯ ИНТЕРПОЛЯЦИЯ ===
+                int x0 = static_cast<int>(std::floor(x));  // col
+                int y0 = static_cast<int>(std::floor(y));  // row
+                int x1 = std::min(x0 + 1, _img.cols - 1);
+                int y1 = std::min(y0 + 1, _img.rows - 1);
+                x0 = std::max(x0, 0);
+                y0 = std::max(y0, 0);
+
+                float dx = x - x0;  // дробная часть по X
+                float dy = y - y0;  // дробная часть по Y
+
+                // Доступ к пикселям: at<uchar>(ROW, COL) = at<uchar>(y, x)
+                uchar p00 = _img.at<uchar>(y0, x0);  // верх-лево
+                uchar p01 = _img.at<uchar>(y0, x1);  // верх-право
+                uchar p10 = _img.at<uchar>(y1, x0);  // низ-лево
+                uchar p11 = _img.at<uchar>(y1, x1);  // низ-право
+
+                float interpolated = 
+                    p00 * (1-dx) * (1-dy) +  // верх-лево
+                    p01 * dx * (1-dy) +      // верх-право
+                    p10 * (1-dx) * dy +      // низ-лево
+                    p11 * dx * dy;           // низ-право
+
+                // Сравниваем с центром
+                if (interpolated >= center) {
+                    lbp_code |= (1 << p);
+                }
             }
             
-            result.at<uchar>(row, col) = local_lbp;
-            local_lbp = 0;
+            result.at<uchar>(row, col) = lbp_code;
         }
     }
     
@@ -194,23 +118,23 @@ cv::Mat LBPH::Histogram()
 {
     cv::Mat result(256, 3, CV_64FC1, cv::Scalar(0.0));
 
-    for (int row = 1; row + 1 < _LBPCode_r1.rows; ++row)
+    for (int row = 0; row < _LBPCode_r1.rows; ++row)
     {
-        for (int col = 1; col + 1 < _LBPCode_r1.cols; ++col)
+        for (int col = 0; col < _LBPCode_r1.cols; ++col)
         {
             result.ptr<double>(_LBPCode_r1.ptr<uchar>(row)[col])[0] += 1.0;
         }
     }
-    for (int row = 1; row + 1 < _LBPCode_r2.rows; ++row)
+    for (int row = 0; row < _LBPCode_r2.rows; ++row)
     {
-        for (int col = 1; col + 1 < _LBPCode_r2.cols; ++col)
+        for (int col = 0; col < _LBPCode_r2.cols; ++col)
         {
             result.ptr<double>(_LBPCode_r2.ptr<uchar>(row)[col])[1] += 1.0;
         }
     }
-    for (int row = 1; row + 1 < _LBPCode_r3.rows; ++row)
+    for (int row = 0; row < _LBPCode_r3.rows; ++row)
     {
-        for (int col = 1; col + 1 < _LBPCode_r3.cols; ++col)
+        for (int col = 0; col < _LBPCode_r3.cols; ++col)
         {
             result.ptr<double>(_LBPCode_r3.ptr<uchar>(row)[col])[2] += 1.0;
         }
@@ -233,10 +157,10 @@ void LBPH::NormalizeHistogram()
     }
 }
 
-double LBPH::Distance(const LBPH& standart, const LBPH& tested)
+double LBPH::Similarity(const LBPH& standart, const LBPH& tested)
 {
-    std::vector<double> w = {0.2, 0.4, 0.4};
-    double alpha = 0.8, beta = 0.2;
+    std::vector<double> w = {0.4, 0.3, 0.3};
+    double alpha = 0.6, beta = 0.4;
 
     double a, b, diff, dot_product, norm_A, norm_B, denominator, chi2_temp;
     double chi2 = 0.0, cosine = 0.0;
