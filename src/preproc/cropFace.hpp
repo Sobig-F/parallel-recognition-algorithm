@@ -9,8 +9,6 @@ namespace preprocessing
 {
 #define BLOBX 640
 #define BLOBY 480
-#define TARGET_X 128
-#define TARGET_Y 128
 
 class FaceDetector
 {
@@ -23,12 +21,6 @@ private:
     float _confidenceThreshold = 0.6;
     bool _init = false;
 };
-
-void GrayScale(cv::Mat& input_);
-void GaussainBlur(cv::Mat& input_);
-void CLAHE(cv::Mat& input_);
-void Resize(cv::Mat& input_);
-
 } // namespace preprocessing
 
 #endif

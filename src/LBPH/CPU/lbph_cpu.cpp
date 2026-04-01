@@ -3,59 +3,65 @@
 
 #include "lbph_cpu.hpp"
 
+static int CountTransitions(uchar code)
+{
+    int transitions = 0;
+    for (int p = 0; p < 8; ++p)
+    {
+        int bit_curr = (code >> p) & 1;
+        int bit_next = (code >> ((p + 1) % 8)) & 1;
+        if (bit_curr != bit_next)
+            ++transitions;
+    }
+    return transitions;
+}
+
+static uchar ToUniformCode(uchar code)
+{
+    if (CountTransitions(code) <= 2)
+    {
+        // Номер бина = число единичных битов (0..8), но бины 0..57 для uniform
+        // Используем просто popcount как индекс (0..8) — 9 uniform бинов
+        // Стандартная таблица: 59 бинов (0 единиц, 1 единица x8 позиций, ..., 8 единиц)
+        // Для простоты возвращаем popcount (0-8)
+        return static_cast<uchar>(std::popcount(code));
+    }
+    return 9; // non-uniform бин
+}
+
 namespace LBPH::cpu
 {
 int LBPH::_i = 0;
+
 LBPH::LBPH(const cv::Mat img_)
 : _img(img_)
 {
+    ++_i;
     LBPCodes();
     NormalizeHistogram();
 }
 
 void LBPH::LBPCodes() noexcept
 {
-    ++_i;
-    _LBPCode_r1 = LBPH::LBPCode(1);
-    _LBPCode_r2 = LBPH::LBPCode(2);
-    _LBPCode_r3 = LBPH::LBPCode(3);
-    cv::Mat lbp_vis;
-    _LBPCode_r1.convertTo(lbp_vis, CV_8U);  // 0-255 → 0-255 (уже в нужном диапазоне)
-    cv::imwrite(SRC_DIR"/../" + std::to_string(_i) + ".png", lbp_vis);
-
-    // std::cout << "LBP Code stats:" << std::endl;
-
-    // auto printStats = [](const cv::Mat& lbp, const std::string& label) {
-    //     cv::Mat hist(256, 1, CV_32S, cv::Scalar(0));
-    //     for (int r = 0; r < lbp.rows; ++r) {
-    //         for (int c = 0; c < lbp.cols; ++c) {
-    //             hist.at<int>(lbp.at<uchar>(r, c), 0)++;
-    //         }
-    //     }
-        
-    //     int maxBin = 0, maxVal = 0;
-    //     for (int i = 0; i < 256; ++i) {
-    //         if (hist.at<int>(i, 0) > maxVal) {
-    //             maxVal = hist.at<int>(i, 0);
-    //             maxBin = i;
-    //         }
-    //     }
-        
-    //     std::cout << label << ": max bin=" << maxBin 
-    //             << " (count=" << maxVal << ")" << std::endl;
-    // };
-
-    // printStats(_LBPCode_r1, "R=1");
-    // printStats(_LBPCode_r2, "R=2");
-    // printStats(_LBPCode_r3, "R=3");
+    _LBPCode_r1 = LBPCode(1);
+    _LBPCode_r2 = LBPCode(2);
+    _LBPCode_r3 = LBPCode(3);
+    // cv::Mat lbp_vis;
+    // _LBPCode_r1.convertTo(lbp_vis, CV_8U);  // 0-255 → 0-255 (уже в нужном диапазоне)
+    // cv::imwrite(SRC_DIR"/../" + std::to_string(_i) + "_R1.png", lbp_vis);
+    // _LBPCode_r2.convertTo(lbp_vis, CV_8U);  // 0-255 → 0-255 (уже в нужном диапазоне)
+    // cv::imwrite(SRC_DIR"/../" + std::to_string(_i) + "_R2.png", lbp_vis);
+    // _LBPCode_r3.convertTo(lbp_vis, CV_8U);  // 0-255 → 0-255 (уже в нужном диапазоне)
+    // cv::imwrite(SRC_DIR"/../" + std::to_string(_i) + "_R3.png", lbp_vis);
 }
 
-cv::Mat LBPH::LBPCode(int radius) noexcept {
+cv::Mat LBPH::LBPCode(int radius) noexcept
+{
+    // Результат: uniform LBP (10 бинов: 0-8 единиц + 9 non-uniform)
     cv::Mat result = cv::Mat::zeros(_img.size(), CV_8UC1);
-    
-    // 8 углов для 8 соседей (в радианах)
+
     const float angles[8] = {
-        0,
+        0.0f,
         -std::numbers::pi_v<float> / 4,
         -std::numbers::pi_v<float> / 2,
         -3 * std::numbers::pi_v<float> / 4,
@@ -64,81 +70,124 @@ cv::Mat LBPH::LBPCode(int radius) noexcept {
         std::numbers::pi_v<float> / 2,
         std::numbers::pi_v<float> / 4
     };
-    
-    // Проходим только по пикселям, где все соседи помещаются в изображение
-    for (int row = radius; row < _img.rows - radius; ++row) {
-        for (int col = radius; col < _img.cols - radius; ++col) {
-            
+
+    for (int row = radius; row < _img.rows - radius; ++row)
+    {
+        for (int col = radius; col < _img.cols - radius; ++col)
+        {
             uchar center = _img.at<uchar>(row, col);
             uchar lbp_code = 0;
-            
-            // Проверяем 8 соседей на окружности
-            for (int p = 0; p < 8; ++p) {
-                // Координаты соседа (плавающие)
+
+            for (int p = 0; p < 8; ++p)
+            {
                 float x = col + radius * std::cos(angles[p]);
                 float y = row + radius * std::sin(angles[p]);
-                
-                // === БИЛИНЕЙНАЯ ИНТЕРПОЛЯЦИЯ ===
-                int x0 = static_cast<int>(std::floor(x));  // col
-                int y0 = static_cast<int>(std::floor(y));  // row
+
+                int x0 = static_cast<int>(std::floor(x));
+                int y0 = static_cast<int>(std::floor(y));
                 int x1 = std::min(x0 + 1, _img.cols - 1);
                 int y1 = std::min(y0 + 1, _img.rows - 1);
                 x0 = std::max(x0, 0);
                 y0 = std::max(y0, 0);
 
-                float dx = x - x0;  // дробная часть по X
-                float dy = y - y0;  // дробная часть по Y
+                float dx = x - x0;
+                float dy = y - y0;
 
-                // Доступ к пикселям: at<uchar>(ROW, COL) = at<uchar>(y, x)
-                uchar p00 = _img.at<uchar>(y0, x0);  // верх-лево
-                uchar p01 = _img.at<uchar>(y0, x1);  // верх-право
-                uchar p10 = _img.at<uchar>(y1, x0);  // низ-лево
-                uchar p11 = _img.at<uchar>(y1, x1);  // низ-право
+                float interpolated =
+                    _img.at<uchar>(y0, x0) * (1-dx) * (1-dy) +
+                    _img.at<uchar>(y0, x1) * dx     * (1-dy) +
+                    _img.at<uchar>(y1, x0) * (1-dx) * dy     +
+                    _img.at<uchar>(y1, x1) * dx     * dy;
 
-                float interpolated = 
-                    p00 * (1-dx) * (1-dy) +  // верх-лево
-                    p01 * dx * (1-dy) +      // верх-право
-                    p10 * (1-dx) * dy +      // низ-лево
-                    p11 * dx * dy;           // низ-право
-
-                // Сравниваем с центром
-                if (interpolated >= center) {
+                if (interpolated >= static_cast<float>(center))
                     lbp_code |= (1 << p);
-                }
             }
-            
-            result.at<uchar>(row, col) = lbp_code;
+
+            result.at<uchar>(row, col) = ToUniformCode(lbp_code);
         }
     }
-    
+
     return result;
 }
 
 cv::Mat LBPH::Histogram()
 {
-    cv::Mat result(256, 3, CV_64FC1, cv::Scalar(0.0));
+    // Гистограмма по сетке GRID_R x GRID_C блоков, конкатенация в один вектор
+    // Каждый блок: 10 бинов × 3 радиуса = 30 значений
+    // Итого: GRID_R * GRID_C * 30 строк, 1 столбец
+    // Но сохраняем в 10 бинов × 3 столбца (как в прототипе — 256 строк)
+    // Используем стандартные 10 бинов uniform LBP
 
-    for (int row = 0; row < _LBPCode_r1.rows; ++row)
+    constexpr int BINS = 10; // uniform LBP бинов (0-8 единиц + non-uniform)
+    constexpr int GRID_R = 8;
+    constexpr int GRID_C = 8;
+    constexpr int TOTAL_ROWS = GRID_R * GRID_C * BINS; // 640
+
+    // Веса блоков: центр лица важнее краёв
+    // Гауссово распределение весов по сетке
+    // auto blockWeight = [&](int gr, int gc) -> double {
+    //     double cy = (GRID_R - 1) / 2.0;
+    //     double cx = (GRID_C - 1) / 2.0;
+    //     double dy = (gr - cy) / cy;
+    //     double dx = (gc - cx) / cx;
+    //     return std::exp(-0.5 * (dx*dx + dy*dy) * 2.0);
+    // };
+
+    // Возвращаем матрицу TOTAL_ROWS × 3
+    cv::Mat result = cv::Mat::zeros(TOTAL_ROWS, 3, CV_64FC1);
+
+    auto fillGrid = [&](const cv::Mat& lbp, int radius, int col_idx)
     {
-        for (int col = 0; col < _LBPCode_r1.cols; ++col)
+        int cell_h = (lbp.rows - 2 * radius) / GRID_R;
+        int cell_w = (lbp.cols - 2 * radius) / GRID_C;
+
+        for (int gr = 0; gr < GRID_R; ++gr)
         {
-            result.ptr<double>(_LBPCode_r1.ptr<uchar>(row)[col])[0] += 1.0;
+            for (int gc = 0; gc < GRID_C; ++gc)
+            {
+                int row_start = radius + gr * cell_h;
+                int col_start = radius + gc * cell_w;
+                int base_bin  = (gr * GRID_C + gc) * BINS;
+
+                for (int r = row_start; r < row_start + cell_h; ++r)
+                {
+                    for (int c = col_start; c < col_start + cell_w; ++c)
+                    {
+                        uchar bin = lbp.at<uchar>(r, c); // 0..9
+                        result.at<double>(base_bin + bin, col_idx) += 1.0;
+                    }
+                }
+            }
         }
-    }
-    for (int row = 0; row < _LBPCode_r2.rows; ++row)
-    {
-        for (int col = 0; col < _LBPCode_r2.cols; ++col)
-        {
-            result.ptr<double>(_LBPCode_r2.ptr<uchar>(row)[col])[1] += 1.0;
-        }
-    }
-    for (int row = 0; row < _LBPCode_r3.rows; ++row)
-    {
-        for (int col = 0; col < _LBPCode_r3.cols; ++col)
-        {
-            result.ptr<double>(_LBPCode_r3.ptr<uchar>(row)[col])[2] += 1.0;
-        }
-    }
+    };
+
+    // auto fillGrid = [&](const cv::Mat& lbp, int radius, int col_idx)
+    // {
+    //     int cell_h = (lbp.rows - 2 * radius) / GRID_R;
+    //     int cell_w = (lbp.cols - 2 * radius) / GRID_C;
+
+    //     for (int gr = 0; gr < GRID_R; ++gr)
+    //     {
+    //         for (int gc = 0; gc < GRID_C; ++gc)
+    //         {
+    //             int row_start = radius + gr * cell_h;
+    //             int col_start = radius + gc * cell_w;
+    //             int base_bin  = (gr * GRID_C + gc) * BINS;
+    //             double wt     = blockWeight(gr, gc);
+
+    //             for (int r = row_start; r < row_start + cell_h; ++r)
+    //                 for (int c = col_start; c < col_start + cell_w; ++c)
+    //                 {
+    //                     uchar bin = lbp.at<uchar>(r, c);
+    //                     result.at<double>(base_bin + bin, col_idx) += wt;
+    //                 }
+    //         }
+    //     }
+    // };
+
+    fillGrid(_LBPCode_r1, 1, 0);
+    fillGrid(_LBPCode_r2, 2, 1);
+    fillGrid(_LBPCode_r3, 3, 2);
 
     return result;
 }
@@ -146,58 +195,62 @@ cv::Mat LBPH::Histogram()
 void LBPH::NormalizeHistogram()
 {
     _normalizeHistogram = Histogram();
-    double sum = 0.0;
-    for (int i = 0; i < 3; ++i)
+
+    for (int col = 0; col < 3; ++col)
     {
-        sum = cv::sum(_normalizeHistogram.col(i))[0];
+        double sum = cv::sum(_normalizeHistogram.col(col))[0];
         if (sum > 0.0)
-        {
-            _normalizeHistogram.col(i) /= sum;
-        }
+            _normalizeHistogram.col(col) /= sum;
     }
 }
 
 double LBPH::Similarity(const LBPH& standart, const LBPH& tested)
 {
-    std::vector<double> w = {0.4, 0.3, 0.3};
-    double alpha = 0.6, beta = 0.4;
+    const double w[3]   = {0.5, 0.3, 0.2};
+    const double alpha  = 0.6;
+    const double beta   = 1 - alpha;
 
-    double a, b, diff, dot_product, norm_A, norm_B, denominator, chi2_temp;
-    double chi2 = 0.0, cosine = 0.0;
+    double chi2_total   = 0.0;
+    double cosine_total = 0.0;
+    int    n_rows       = standart._normalizeHistogram.rows;
 
     for (int col = 0; col < 3; ++col)
     {
-        chi2_temp = 0.0;
-        dot_product = 0.0;
-        norm_A = 0.0;
-        norm_B = 0.0;
+        double chi2_sum    = 0.0;
+        double dot         = 0.0;
+        double norm_A      = 0.0;
+        double norm_B      = 0.0;
 
-        for (int i = 0; i < 256; ++i)
+        for (int i = 0; i < n_rows; ++i)
         {
-            a = standart._normalizeHistogram.ptr<double>(i)[col];
-            b = tested._normalizeHistogram.ptr<double>(i)[col];
+            double a = standart._normalizeHistogram.at<double>(i, col);
+            double b = tested._normalizeHistogram.at<double>(i, col);
 
-            dot_product += a * b;
+            dot   += a * b;
             norm_A += a * a;
             norm_B += b * b;
 
-            if (a + b > 0)
-            {
-                diff = a - b;
-                chi2_temp += (diff * diff) / (a + b);
-            }
+            double sum = a + b;
+            if (sum > 1e-10)
+                chi2_sum += (a - b) * (a - b) / sum;
         }
 
-        norm_A = sqrt(norm_A);
-        norm_B = sqrt(norm_B);
-        denominator = norm_A * norm_B;
-        if (denominator > 1e-10) {
-            cosine += w[col] * (dot_product / denominator);
-        }
-        chi2 += w[col] * (1 / (1 + chi2_temp));
+        double denom = std::sqrt(norm_A) * std::sqrt(norm_B);
+        double cosine_sim = (denom > 1e-10) ? dot / denom : 0.0;
+        double chi2_sim   = 1.0 / (1.0 + chi2_sum);
+
+        chi2_total   += w[col] * chi2_sim;
+        cosine_total += w[col] * cosine_sim;
     }
 
-    return alpha * chi2 + beta * cosine;
-}
+    // std::cout   << "Similarity="
+    //             << alpha * chi2_total + beta * cosine_total << std::endl;
+    // std::cout   << "\nW={"      << w[0] << ", "
+    //                             << w[1] << ", "
+    //                             << w[2] << "}"
+    //             << std::endl;
+    // std::cout   << "===============" << std::endl;
 
+    return alpha * chi2_total + beta * cosine_total;
+}
 } // namespace LBPH::cpu
