@@ -8,36 +8,41 @@ set(CMAKE_CUDA_ARCHITECTURES 89)
 # ==================== OPENCV ====================
 set(OpenCV_DIR "D:/OpenCV/install/x64/vc17/lib")
 find_package(OpenCV REQUIRED COMPONENTS 
-    core imgproc cudaarithm cudaimgproc cudafilters cudawarping
+    core imgproc face cudaarithm cudaimgproc cudafilters cudawarping
     imgcodecs dnn highgui objdetect)
 
 # ==================== CUDA TOOLKIT ====================
 find_package(CUDAToolkit REQUIRED)
 
 # ==================== EXECUTABLE ====================
-file(GLOB PREPROC 
+file(GLOB_RECURSE PREPROC 
     "src/preproc/*"
 )
-file(GLOB ARCFACE 
+file(GLOB_RECURSE APP
+    "src/app/*"
+)
+file(GLOB_RECURSE ARCFACE 
     "src/arcface/*"
 )
-file(GLOB FISHERFACES 
-    "src/fisherfaces/*/*"
+file(GLOB_RECURSE FISHERFACES 
+    "src/fisherfaces/*"
 )
-file(GLOB LBPH 
-    "src/LBPH/*/*"
+file(GLOB_RECURSE LBPH 
+    "src/LBPH/*"
 )
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS 
              "src/preproc/*"
+             "src/app/*"
              "src/arcface/*"
-             "src/fisherfaces/*/*"
-             "src/LBPH/*/*"
+             "src/fisherfaces/*"
+             "src/LBPH/*"
 )
 
 add_executable(biometric
     src/main.cpp
     ${PREPROC}
+    ${APP}
     ${ARCFACE}
     ${FISHERFACES}
     ${LBPH}
@@ -57,9 +62,17 @@ target_include_directories(biometric PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}  # Пути к заголовкам CUDA
 )
 
+if(MSVC)
+    target_compile_options(biometric PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+endif()
+
 target_link_libraries(biometric 
     ${OpenCV_LIBS}
     CUDA::cudart  # CUDA runtime из CUDAToolkit
+    comctl32
+    comdlg32
+    shell32
+    ole32
 )
 
 target_compile_definitions(biometric PRIVATE 

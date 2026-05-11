@@ -1,56 +1,89 @@
 #include <filesystem>
+#include <iostream>
+#include <clocale>
+#include <string>
 
-#include "LBPH/CPU/lbph_cpu.hpp"
+#define NOMINMAX
+#include <Windows.h>
+
+#include "LBPH/lbph_descriptors.hpp"
+#include "app/win_gui.hpp"
+#include "opencv2/imgcodecs.hpp"
 #include "preproc/cropFace.hpp"
-#include "preproc/preproc.hpp"
 
-// #define EPS 0.55
+namespace
+{
+void ConfigureConsoleUtf8()
+{
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    std::setlocale(LC_CTYPE, ".UTF-8");
+}
+
+int SmokeTest()
+{
+    cv::Mat image = cv::imread(SRC_DIR "../data/Faces/Akshay Kumar_24.jpg", cv::IMREAD_COLOR);
+    if (image.empty())
+    {
+        std::cerr << "Smoke test image was not found." << std::endl;
+        return 1;
+    }
+
+    preprocessing::FaceDetector detector(ONNX_MODEL_PATH);
+    cv::Mat crop = detector.Detect(image);
+    if (crop.empty())
+    {
+        std::cerr << "Smoke test face was not detected." << std::endl;
+        return 1;
+    }
+
+    cv::Mat cpuPrepared = biometrics::PreprocessCpu(crop);
+    cv::Mat cudaPrepared;
+    if (biometrics::IsCudaAvailable())
+    {
+        cudaPrepared = biometrics::PreprocessCuda(crop);
+    }
+
+    for (const biometrics::AlgorithmInfo& algorithm : biometrics::Algorithms())
+    {
+        if (algorithm.usesCuda && cudaPrepared.empty())
+        {
+            std::cout << algorithm.title << ": skipped, CUDA unavailable" << std::endl;
+            continue;
+        }
+
+        cv::Mat prepared = algorithm.usesCuda ? cudaPrepared : cpuPrepared;
+        cv::Mat descriptor = biometrics::ComputeDescriptor(algorithm.id, prepared);
+        double selfSimilarity = biometrics::CompareDescriptors(algorithm.id, descriptor, descriptor);
+        std::cout << algorithm.title
+                  << ": descriptor=" << descriptor.cols
+                  << ", self_similarity=" << selfSimilarity
+                  << std::endl;
+    }
+
+    return 0;
+}
+} // namespace
 
 int main(int argc, char* argv[])
 {
-    double eps = 0.9;
-    if (argc > 1)
+    try
     {
-        char* end;
-        eps = strtod(argv[1], &end);
-    }
-    
+        ConfigureConsoleUtf8();
 
-    cv::Mat img1 = cv::imread(SRC_DIR"../data/Faces/Akshay Kumar_24.jpg",
-                            cv::IMREAD_COLOR
-                        );
-    
-    preprocessing::FaceDetector detector(ONNX_MODEL_PATH);
-
-    cv::Mat standart = detector.Detect(img1);
-    preprocessing::GrayScale(standart);
-    preprocessing::Resize(standart);
-    int i = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(SRC_DIR"../data/Faces"))
-    {
-        if (std::filesystem::is_regular_file(entry.path()))
+        if (argc > 1 && std::string(argv[1]) == "--smoke-test")
         {
-            ++i;
-            cv::Mat test_img_input = cv::imread(entry.path().string(),
-                                                cv::IMREAD_COLOR
-                                        );
-            cv::Mat test_img = detector.Detect(test_img_input);
-            if (test_img.empty())
-            {
-                continue;
-            }
-            preprocessing::GrayScale(test_img);
-            preprocessing::Resize(test_img);
-            LBPH::cpu::LBPH tested(test_img);
-            double similarity = LBPH::cpu::LBPH::Similarity(standart, tested);
-            if (similarity >= eps)
-            {
-                cv::imwrite(SRC_DIR"../result/true/" + std::to_string(i) + "_" + std::to_string(similarity) + ".jpg", test_img);
-            } else
-            {
-                cv::imwrite(SRC_DIR"../result/false/" + std::to_string(i) + "_" + std::to_string(similarity) + ".jpg", test_img);
-            }
-            std::cout << i << std::endl;
+            return SmokeTest();
         }
+
+        return biometrics::RunGuiApp(
+            std::filesystem::path(ONNX_MODEL_PATH),
+            std::filesystem::path(SRC_DIR) / ".." / "data" / "enrolled_faces"
+        );
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "Application failed: " << error.what() << std::endl;
+        return 1;
     }
 }

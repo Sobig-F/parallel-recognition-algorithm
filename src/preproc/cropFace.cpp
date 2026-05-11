@@ -39,6 +39,11 @@ FaceDetector::FaceDetector(const std::string& modelPath_)
 
 cv::Mat FaceDetector::Detect(const cv::Mat& input_)
 {
+    if (!_init || _net.empty() || input_.empty())
+    {
+        return cv::Mat();
+    }
+
     cv::Size originalSize = input_.size();
 
     _net->setInputSize(originalSize);
