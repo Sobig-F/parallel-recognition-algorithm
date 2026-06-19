@@ -154,6 +154,8 @@ std::string ExpectedNameFromFile(const std::filesystem::path& path)
     return Trim(stem);
 }
 
+bool SameIdentity(const std::string& first, const std::string& second);
+
 void AddDescriptor(
     std::map<AlgorithmId, cv::Mat>& sums,
     std::map<AlgorithmId, int>& counts,
@@ -171,6 +173,78 @@ void AddDescriptor(
         found->second += descriptor;
     }
     ++counts[algorithm];
+}
+
+cv::Mat AverageDescriptor(const cv::Mat& descriptorSum, int count)
+{
+    if (count <= 0 || descriptorSum.empty())
+    {
+        return {};
+    }
+
+    cv::Mat average;
+    descriptorSum.convertTo(average, CV_32FC1, 1.0 / static_cast<double>(count));
+    return average.reshape(1, 1).clone();
+}
+
+cv::Mat MergeDescriptorTemplate(const cv::Mat& oldAverage, int oldCount, const cv::Mat& newSum, int newCount)
+{
+    if (oldAverage.empty() || oldAverage.total() != newSum.total() || oldCount <= 0)
+    {
+        return AverageDescriptor(newSum, newCount);
+    }
+
+    cv::Mat old32;
+    cv::Mat new32;
+    oldAverage.reshape(1, 1).convertTo(old32, CV_32FC1);
+    newSum.reshape(1, 1).convertTo(new32, CV_32FC1);
+
+    cv::Mat merged = old32 * static_cast<float>(oldCount) + new32;
+    merged /= static_cast<float>(oldCount + newCount);
+    return merged.reshape(1, 1).clone();
+}
+
+const FaceRecord* FindExistingRecord(const FaceDatabase& database, const std::string& name)
+{
+    auto found = std::find_if(database.Records().begin(), database.Records().end(), [&](const FaceRecord& record) {
+        return SameIdentity(record.name, name);
+    });
+    return found == database.Records().end() ? nullptr : &*found;
+}
+
+int DescriptorCountFor(const FaceRecord& record, AlgorithmId algorithm)
+{
+    auto found = record.descriptorCounts.find(algorithm);
+    if (found != record.descriptorCounts.end() && found->second > 0)
+    {
+        return found->second;
+    }
+
+    return std::max(record.sampleCount, 1);
+}
+
+void ValidateTemplatesForAlgorithms(const FaceDatabase& database, const std::vector<AlgorithmId>& algorithms)
+{
+    for (AlgorithmId algorithm : algorithms)
+    {
+        int availableTemplates = 0;
+        for (const FaceRecord& record : database.Records())
+        {
+            auto descriptor = record.descriptors.find(algorithm);
+            if (descriptor != record.descriptors.end() && !descriptor->second.empty())
+            {
+                ++availableTemplates;
+            }
+        }
+
+        if (availableTemplates == 0)
+        {
+            throw std::runtime_error(
+                "В базе нет шаблонов для алгоритма '" + AlgorithmTitle(algorithm) +
+                "'. Повторно добавьте лицо с доступной нужной реализацией алгоритма."
+            );
+        }
+    }
 }
 
 std::vector<AlgorithmId> CpuAlgorithms()
@@ -338,13 +412,40 @@ void RecognitionEngine::EnrollFace(
         throw std::runtime_error("Не найдено ни одного пригодного изображения лица");
     }
 
+    const FaceRecord* existing = FindExistingRecord(_database, name);
+
     FaceRecord record;
-    record.name = name;
-    record.sampleCount = accepted;
-    for (auto& [algorithm, descriptor] : sums)
+    record.name = existing != nullptr ? existing->name : name;
+    record.sampleCount = accepted + (existing != nullptr ? std::max(existing->sampleCount, 0) : 0);
+    record.aggregation = "mean_descriptor";
+    if (existing != nullptr)
     {
-        descriptor /= static_cast<float>(counts[algorithm]);
-        record.descriptors[algorithm] = descriptor;
+        record.descriptors = existing->descriptors;
+        record.descriptorCounts = existing->descriptorCounts;
+    }
+
+    for (const auto& [algorithm, descriptorSum] : sums)
+    {
+        int newCount = counts[algorithm];
+        if (existing != nullptr)
+        {
+            auto oldDescriptor = existing->descriptors.find(algorithm);
+            if (oldDescriptor != existing->descriptors.end())
+            {
+                int oldCount = DescriptorCountFor(*existing, algorithm);
+                record.descriptors[algorithm] = MergeDescriptorTemplate(
+                    oldDescriptor->second,
+                    oldCount,
+                    descriptorSum,
+                    newCount
+                );
+                record.descriptorCounts[algorithm] = oldCount + newCount;
+                continue;
+            }
+        }
+
+        record.descriptors[algorithm] = AverageDescriptor(descriptorSum, newCount);
+        record.descriptorCounts[algorithm] = newCount;
     }
 
     _database.Save(record);
@@ -352,8 +453,9 @@ void RecognitionEngine::EnrollFace(
 
     if (progress)
     {
-        progress("Лицо '" + name + "' сохранено по " + std::to_string(accepted) +
-                 " фото, пропущено " + std::to_string(skipped) + ".");
+        progress("Шаблон лица '" + record.name + "' обновлен: добавлено " + std::to_string(accepted) +
+                 " фото, всего в шаблоне " + std::to_string(record.sampleCount) +
+                 ", пропущено " + std::to_string(skipped) + ".");
         progress("Лиц в базе: " + std::to_string(_database.Records().size()));
     }
 }
@@ -383,6 +485,7 @@ SearchReport RecognitionEngine::SearchDirectory(
     {
         throw std::runtime_error("База лиц пуста. Сначала добавьте хотя бы одно лицо.");
     }
+    ValidateTemplatesForAlgorithms(_database, requestedAlgorithms);
 
     std::vector<CandidateFace> candidates = LoadCandidates(directory, progress);
     if (candidates.empty())
@@ -622,7 +725,7 @@ AlgorithmRunSummary RecognitionEngine::RunAlgorithm(
     AlgorithmRunSummary summary;
     summary.algorithm = algorithm;
 
-    auto started = std::chrono::high_resolution_clock::now();
+    double measuredAlgorithmMilliseconds = 0.0;
     bool useCudaPreprocess = GetAlgorithmInfo(algorithm).usesCuda;
 
     int index = 0;
@@ -655,6 +758,7 @@ AlgorithmRunSummary RecognitionEngine::RunAlgorithm(
 
                 result.match = _database.FindBest(algorithm, descriptor);
             });
+            measuredAlgorithmMilliseconds += result.totalMilliseconds;
             result.recognized = result.match.found && result.match.similarity >= result.threshold;
             summary.bestSimilarity = std::max(summary.bestSimilarity, result.match.similarity);
 
@@ -735,8 +839,7 @@ AlgorithmRunSummary RecognitionEngine::RunAlgorithm(
         results.push_back(std::move(result));
     }
 
-    auto elapsed = std::chrono::high_resolution_clock::now() - started;
-    summary.milliseconds = std::chrono::duration<double, std::milli>(elapsed).count();
+    summary.milliseconds = measuredAlgorithmMilliseconds;
     if (summary.processed > 0)
     {
         summary.averageMilliseconds = summary.milliseconds / static_cast<double>(summary.processed);

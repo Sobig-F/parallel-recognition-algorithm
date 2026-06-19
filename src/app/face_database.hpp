@@ -15,7 +15,9 @@ struct FaceRecord
 {
     std::string name;
     int sampleCount = 0;
+    std::string aggregation = "mean_descriptor";
     std::map<AlgorithmId, cv::Mat> descriptors;
+    std::map<AlgorithmId, int> descriptorCounts;
 };
 
 struct MatchResult

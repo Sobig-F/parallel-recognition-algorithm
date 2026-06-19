@@ -1,5 +1,7 @@
 build
 data
-tests
-temp.md
+face_database
 result
+diploma/.pydeps
+diploma/rendered
+~$*

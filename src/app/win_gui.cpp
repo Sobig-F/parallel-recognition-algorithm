@@ -431,6 +431,19 @@ private:
         case WM_COMMAND:
             HandleCommand(LOWORD(wParam));
             return 0;
+        case WM_CLOSE:
+            if (_busy)
+            {
+                MessageBoxW(
+                    _window,
+                    L"Дождитесь завершения текущей операции.",
+                    L"Фейс-контроль LBPH",
+                    MB_OK | MB_ICONINFORMATION
+                );
+                return 0;
+            }
+            DestroyWindow(_window);
+            return 0;
         case kStatusMessage:
             SetWindowTextW(_statusText, reinterpret_cast<std::wstring*>(lParam)->c_str());
             delete reinterpret_cast<std::wstring*>(lParam);

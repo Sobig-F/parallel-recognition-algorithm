@@ -63,6 +63,15 @@ void FaceDatabase::Load()
         FaceRecord record;
         storage["name"] >> record.name;
         storage["sample_count"] >> record.sampleCount;
+        cv::FileNode aggregationNode = storage["aggregation"];
+        if (!aggregationNode.empty())
+        {
+            aggregationNode >> record.aggregation;
+        }
+        if (record.aggregation.empty())
+        {
+            record.aggregation = "mean_descriptor";
+        }
 
         for (const AlgorithmInfo& algorithm : Algorithms())
         {
@@ -75,6 +84,18 @@ void FaceDatabase::Load()
                     descriptor.convertTo(descriptor, CV_32FC1);
                 }
                 record.descriptors[algorithm.id] = descriptor.reshape(1, 1).clone();
+
+                int descriptorCount = 0;
+                cv::FileNode countNode = storage[std::string(algorithm.key) + "_count"];
+                if (!countNode.empty())
+                {
+                    countNode >> descriptorCount;
+                }
+                if (descriptorCount <= 0)
+                {
+                    descriptorCount = std::max(record.sampleCount, 1);
+                }
+                record.descriptorCounts[algorithm.id] = descriptorCount;
             }
         }
 
@@ -101,12 +122,18 @@ void FaceDatabase::Save(const FaceRecord& record) const
 
     storage << "name" << record.name;
     storage << "sample_count" << record.sampleCount;
+    storage << "aggregation" << record.aggregation;
     for (const AlgorithmInfo& algorithm : Algorithms())
     {
         auto found = record.descriptors.find(algorithm.id);
         if (found != record.descriptors.end() && !found->second.empty())
         {
             storage << algorithm.key << found->second;
+            auto count = record.descriptorCounts.find(algorithm.id);
+            int descriptorCount = count != record.descriptorCounts.end()
+                ? std::max(count->second, 1)
+                : std::max(record.sampleCount, 1);
+            storage << (std::string(algorithm.key) + "_count") << descriptorCount;
         }
     }
 }

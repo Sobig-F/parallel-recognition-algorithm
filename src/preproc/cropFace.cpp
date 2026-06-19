@@ -1,5 +1,10 @@
 #include "cropFace.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <vector>
+
 namespace preprocessing
 {
 FaceDetector::FaceDetector(const std::string& modelPath_)
@@ -54,16 +59,19 @@ cv::Mat FaceDetector::Detect(const cv::Mat& input_)
 
     for (int i = 0; i < net_outputs.rows; ++i)
     {
-        cv::Rect rect = {
-            static_cast<int>(std::max(0, static_cast<int>(net_outputs.at<float>(i, 0)))),
-            static_cast<int>(std::max(0, static_cast<int>(net_outputs.at<float>(i, 1)))),
-            static_cast<int>(net_outputs.at<float>(i, 2)),
-            static_cast<int>(net_outputs.at<float>(i, 3)),
-        };
+        cv::Rect rect(
+            static_cast<int>(std::floor(net_outputs.at<float>(i, 0))),
+            static_cast<int>(std::floor(net_outputs.at<float>(i, 1))),
+            static_cast<int>(std::ceil(net_outputs.at<float>(i, 2))),
+            static_cast<int>(std::ceil(net_outputs.at<float>(i, 3)))
+        );
 
-        rect.width = std::min(originalSize.width - rect.x, rect.width);
-        rect.height = std::min(originalSize.height - rect.y, rect.height);
-        
+        rect &= cv::Rect(0, 0, originalSize.width, originalSize.height);
+        if (rect.width <= 0 || rect.height <= 0)
+        {
+            continue;
+        }
+
         faces.push_back(rect);
     }
 
